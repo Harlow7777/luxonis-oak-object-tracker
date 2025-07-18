@@ -160,7 +160,7 @@ with dai.Device(pipeline) as device:
             in_focus, sharpness = is_image_in_focus(previewFrame, threshold=2000.0)
             if in_focus:
                 timestamp = time.strftime("%Y%m%d_%H%M%S")
-                filename = f"bird_detected_{timestamp}.jpg"
+                filename = f"bird_detected_{timestamp}.png"
                 cv2.imwrite(filename, highResFrame)
                 print(f"[INFO] Bird detected (sharpness={sharpness:.1f}). Saved: {filename}")
                 last_saved_time = time.monotonic()

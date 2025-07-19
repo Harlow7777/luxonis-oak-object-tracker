@@ -7,9 +7,9 @@ from email.mime.text import MIMEText
 
 # Configuration
 WATCH_DIR = Path(__file__).parent.resolve()
-SENDER_EMAIL = "hsfan123@gmail.com"
-RECEIVER_EMAIL = "harlow_jacob@outlook.com"
-EMAIL_PASSWORD = "skoc rmbi teho gfah"
+SENDER_EMAIL = "<sender>@gmail.com"
+RECEIVER_EMAIL = "<receiver>"
+EMAIL_PASSWORD = "<app password>"
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 465  # Use 587 if using TLS
 BATCH_SIZE = 5

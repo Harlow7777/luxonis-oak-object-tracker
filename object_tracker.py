@@ -10,6 +10,10 @@ Set detection label to "bird"
 Added Laplacian focus check using a threshold of 2000 
 Set interval to 10s
 Differentiated preview frame from high res video frame to ensure inference is done on 300x300 while saved frame is at 1080p
+
+Updated on 7-19-25
+Set tracker type to ZERO_TERM_IMAGELESS
+Now collects a 5 frame set upon detection and saves the sharpest
 """
 
 from pathlib import Path
@@ -18,6 +22,11 @@ import depthai as dai
 import numpy as np
 import time
 import argparse
+
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.image import MIMEImage
 
 labelMap = ["background", "aeroplane", "bicycle", "bird", "boat", "bottle", "bus", "car", "cat", "chair", "cow",
             "diningtable", "dog", "horse", "motorbike", "person", "pottedplant", "sheep", "sofa", "train", "tvmonitor"]
@@ -47,7 +56,6 @@ videoOut = pipeline.create(dai.node.XLinkOut)
 xlinkOut.setStreamName("preview")
 trackerOut.setStreamName("tracklets")
 videoOut.setStreamName("video")
-# controlIn.setStreamName("control")  # For autofocus control
 
 # Configure camera
 camRgb.setPreviewSize(300, 300)
@@ -60,7 +68,6 @@ camRgb.setFps(40)
 camRgb.preview.link(detectionNetwork.input)
 camRgb.video.link(videoOut.input)
 objectTracker.passthroughTrackerFrame.link(xlinkOut.input)
-# controlIn.out.link(camRgb.inputControl)
 
 # Neural Network
 detectionNetwork.setBlobPath(args.nnPath)
@@ -69,7 +76,7 @@ detectionNetwork.input.setBlocking(False)
 
 objectTracker.setDetectionLabelsToTrack([3])  # only track "bird"
 # possible tracking types: ZERO_TERM_COLOR_HISTOGRAM, ZERO_TERM_IMAGELESS, SHORT_TERM_IMAGELESS, SHORT_TERM_KCF
-objectTracker.setTrackerType(dai.TrackerType.SHORT_TERM_IMAGELESS)
+objectTracker.setTrackerType(dai.TrackerType.ZERO_TERM_IMAGELESS)
 # take the smallest ID when new object is tracked, possible options: SMALLEST_ID, UNIQUE_ID
 objectTracker.setTrackerIdAssignmentPolicy(dai.TrackerIdAssignmentPolicy.SMALLEST_ID)
 
@@ -93,12 +100,6 @@ with dai.Device(pipeline) as device:
     videoQueue = device.getOutputQueue("video", 4, False)
     preview = device.getOutputQueue("preview", 4, False)
     tracklets = device.getOutputQueue("tracklets", 4, False)
-    # controlQueue = device.getInputQueue("control")  # For autofocus
-
-    # Enable continuous autofocus on startup
-    # ctrl = dai.CameraControl()
-    # ctrl.setAutoFocusMode(dai.CameraControl.AutoFocusMode.AUTO)
-    # controlQueue.send(ctrl)
 
     startTime = time.monotonic()
     counter = 0
@@ -148,24 +149,49 @@ with dai.Device(pipeline) as device:
 
         # Save high res frame if bird found, in focus and 10s passed
         if bird_detected and (time.monotonic() - last_saved_time) > 10:
-            # Trigger autofocus
-            # focus_cmd = dai.CameraControl()
-            # focus_cmd.setAutoFocusTrigger()
-            # controlQueue.send(focus_cmd)
+            print("[INFO] Bird detected. Capturing up to 5 valid frames for focus check...")
+            frame_batch = []
 
-            # print("[INFO] Bird detected. Triggering autofocus...")
-            # time.sleep(0.3)  # Allow autofocus to settle
-            
-            # Check focus threshold
-            in_focus, sharpness = is_image_in_focus(previewFrame, threshold=2000.0)
-            if in_focus:
+            attempts = 0
+            while len(frame_batch) < 5 and attempts < 10:
+                preview_frame = preview.get().getCvFrame()
+                video_frame = videoQueue.get().getCvFrame()
+                track = tracklets.get()
+                trackletsData = track.tracklets
+
+                found_bird = any(labelMap[t.label].lower() == "bird" for t in trackletsData)
+                if found_bird:
+                    frame_batch.append(video_frame)
+                    # print(f"[INFO] Valid bird frame collected ({len(frame_batch)}/5)")
+                # else:
+                    # print("[INFO] Frame skipped: no bird detected.")
+
+                attempts += 1
+                time.sleep(0.2)
+
+            if not frame_batch:
+                print("[SKIPPED] No valid bird frames collected in batch.")
+                continue
+
+            # Select the sharpest frame from valid ones
+            best_frame = None
+            best_sharpness = 0
+
+            for i, frame in enumerate(frame_batch):
+                _, sharpness = is_image_in_focus(frame)
+                # print(f"[DEBUG] Frame {i+1} sharpness: {sharpness:.1f}")
+                if sharpness > best_sharpness:
+                    best_sharpness = sharpness
+                    best_frame = frame
+
+            if best_sharpness > 2000.0:
                 timestamp = time.strftime("%Y%m%d_%H%M%S")
                 filename = f"bird_detected_{timestamp}.png"
-                cv2.imwrite(filename, highResFrame)
-                print(f"[INFO] Bird detected (sharpness={sharpness:.1f}). Saved: {filename}")
+                cv2.imwrite(filename, best_frame)
+                print(f"[INFO] Saved sharpest frame (sharpness={best_sharpness:.1f}) as {filename}")
                 last_saved_time = time.monotonic()
-            # else:
-                # print(f"[SKIPPED] Bird detected but frame not in focus (sharpness={sharpness:.1f})")
+            else:
+                print(f"[SKIPPED] No sharp frame found (best={best_sharpness:.1f})")
 
         # Show preview display
         cv2.imshow("tracker", previewFrame)
